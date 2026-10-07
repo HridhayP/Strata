@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package strata.kv;
+
+option go_package = "github.com/HridhayP/strata/proto/kvpb";
+
+enum Op {
+  GET = 0;
+  PUT = 1;
+  APPEND = 2;
+}
+
+enum Err {
+  OK = 0;
+  NO_KEY = 1;
+  WRONG_LEADER = 2;
+  WRONG_GROUP = 3; // this replica group does not own the key's shard
+  TIMEOUT = 4;
+}
+
+message Request {
+  string group = 1; // routing key when one process hosts several groups
+  Op op = 2;
+  string key = 3;
+  bytes value = 4;
+  // (client_id, seq) identifies a write so retries are applied at most once.
+  uint64 client_id = 5;
+  uint64 seq = 6;
+}
+
+message Response {
+  Err err = 1;
+  bytes value = 2;
+  int32 leader_hint = 3; // -1 if unknown
+}
+
+// Command is what the KV state machine stores in the Raft log.
+message Command {
+  oneof cmd {
+    Request client = 1;
+  }
+}
+
+service KV {
+  rpc Do(Request) returns (Response);
+}

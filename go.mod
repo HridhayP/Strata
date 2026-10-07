@@ -3,6 +3,7 @@ module github.com/HridhayP/strata
 go 1.27.0
 
 require (
+	github.com/anishathalye/porcupine v1.3.1 // indirect
 	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
