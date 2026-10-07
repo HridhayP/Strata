@@ -229,7 +229,11 @@ type AppendEntriesRequest struct {
 	Entries      []*Entry               `protobuf:"bytes,6,rep,name=entries,proto3" json:"entries,omitempty"`
 	LeaderCommit uint64                 `protobuf:"varint,7,opt,name=leader_commit,json=leaderCommit,proto3" json:"leader_commit,omitempty"`
 	// read_ctx lets the leader confirm leadership for a batch of ReadIndex reads.
-	ReadCtx       uint64 `protobuf:"varint,8,opt,name=read_ctx,json=readCtx,proto3" json:"read_ctx,omitempty"`
+	ReadCtx uint64 `protobuf:"varint,8,opt,name=read_ctx,json=readCtx,proto3" json:"read_ctx,omitempty"`
+	// read_probe marks a request that only confirms leadership for read_ctx.
+	// The follower checks the term and replies at once, without touching its
+	// log or waiting on an fsync, so reads never queue behind replication.
+	ReadProbe     bool `protobuf:"varint,9,opt,name=read_probe,json=readProbe,proto3" json:"read_probe,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -318,6 +322,13 @@ func (x *AppendEntriesRequest) GetReadCtx() uint64 {
 		return x.ReadCtx
 	}
 	return 0
+}
+
+func (x *AppendEntriesRequest) GetReadProbe() bool {
+	if x != nil {
+		return x.ReadProbe
+	}
+	return false
 }
 
 type AppendEntriesResponse struct {
@@ -659,7 +670,7 @@ const file_raft_proto_rawDesc = "" +
 	"\bpre_vote\x18\x06 \x01(\bR\apreVote\"L\n" +
 	"\x13RequestVoteResponse\x12\x12\n" +
 	"\x04term\x18\x01 \x01(\x04R\x04term\x12!\n" +
-	"\fvote_granted\x18\x02 \x01(\bR\vvoteGranted\"\x95\x02\n" +
+	"\fvote_granted\x18\x02 \x01(\bR\vvoteGranted\"\xb4\x02\n" +
 	"\x14AppendEntriesRequest\x12\x14\n" +
 	"\x05group\x18\x01 \x01(\tR\x05group\x12\x12\n" +
 	"\x04term\x18\x02 \x01(\x04R\x04term\x12\x1b\n" +
@@ -668,7 +679,9 @@ const file_raft_proto_rawDesc = "" +
 	"\rprev_log_term\x18\x05 \x01(\x04R\vprevLogTerm\x12,\n" +
 	"\aentries\x18\x06 \x03(\v2\x12.strata.raft.EntryR\aentries\x12#\n" +
 	"\rleader_commit\x18\a \x01(\x04R\fleaderCommit\x12\x19\n" +
-	"\bread_ctx\x18\b \x01(\x04R\areadCtx\"\xcd\x01\n" +
+	"\bread_ctx\x18\b \x01(\x04R\areadCtx\x12\x1d\n" +
+	"\n" +
+	"read_probe\x18\t \x01(\bR\treadProbe\"\xcd\x01\n" +
 	"\x15AppendEntriesResponse\x12\x12\n" +
 	"\x04term\x18\x01 \x01(\x04R\x04term\x12\x18\n" +
 	"\asuccess\x18\x02 \x01(\bR\asuccess\x12\x1f\n" +

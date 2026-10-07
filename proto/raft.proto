@@ -36,6 +36,10 @@ message AppendEntriesRequest {
   uint64 leader_commit = 7;
   // read_ctx lets the leader confirm leadership for a batch of ReadIndex reads.
   uint64 read_ctx = 8;
+  // read_probe marks a request that only confirms leadership for read_ctx.
+  // The follower checks the term and replies at once, without touching its
+  // log or waiting on an fsync, so reads never queue behind replication.
+  bool read_probe = 9;
 }
 
 message AppendEntriesResponse {

@@ -21,6 +21,7 @@ type cluster struct {
 	n         int
 	net       *sim.Network
 	snapEvery int // >0: nodes snapshot every snapEvery applied entries
+	inflight  int // Config.MaxInflight
 	disk      bool
 	dirs      []string
 
@@ -61,6 +62,15 @@ func newCluster(t *testing.T, n int, opts ...func(*cluster)) *cluster {
 
 func withSnapshots(every int) func(*cluster) { return func(c *cluster) { c.snapEvery = every } }
 func withDisk() func(*cluster)               { return func(c *cluster) { c.disk = true } }
+func withInflight(n int) func(*cluster)      { return func(c *cluster) { c.inflight = n } }
+
+// bothReplicationModes runs f with one AppendEntries in flight per follower
+// and with a pipelined window.
+func bothReplicationModes(t *testing.T, f func(t *testing.T, opt func(*cluster))) {
+	for _, n := range []int{1, 4} {
+		t.Run(fmt.Sprintf("inflight=%d", n), func(t *testing.T) { f(t, withInflight(n)) })
+	}
+}
 
 func (c *cluster) peers() []int {
 	p := make([]int, c.n)
@@ -94,6 +104,7 @@ func (c *cluster) start(i int) {
 		ApplyCh:           applyCh,
 		ElectionTimeout:   150 * time.Millisecond,
 		HeartbeatInterval: 30 * time.Millisecond,
+		MaxInflight:       c.inflight,
 	})
 	if err != nil {
 		c.t.Fatalf("start %d: %v", i, err)
@@ -398,7 +409,11 @@ func TestRejoinOfPartitionedLeader(t *testing.T) {
 }
 
 func TestBackupManyEntries(t *testing.T) {
-	c := newCluster(t, 5)
+	bothReplicationModes(t, testBackupManyEntries)
+}
+
+func testBackupManyEntries(t *testing.T, opt func(*cluster)) {
+	c := newCluster(t, 5, opt)
 	c.one("init", 5, false)
 	l := c.checkOneLeader()
 	// Leave the leader with one follower; it collects uncommitted entries.
@@ -443,7 +458,11 @@ func TestFigure8Unreliable(t *testing.T) {
 	if testing.Short() {
 		t.Skip("slow")
 	}
-	c := newCluster(t, 5)
+	bothReplicationModes(t, testFigure8Unreliable)
+}
+
+func testFigure8Unreliable(t *testing.T, opt func(*cluster)) {
+	c := newCluster(t, 5, opt)
 	c.net.SetReliable(false, 0.1, 20*time.Millisecond, 0.02)
 	c.one("start", 1, true)
 	up := 5

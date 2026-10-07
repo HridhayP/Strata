@@ -76,6 +76,10 @@ func TestLinearizableEverythingWithSnapshots(t *testing.T) {
 	runCheck(t, Options{Seed: 5, Unreliable: true, Partitions: true, Crashes: true, MaxRaftLog: 50, Duration: 3 * time.Second})
 }
 
+func TestLinearizableEverythingPipelined(t *testing.T) {
+	runCheck(t, Options{Seed: 7, Unreliable: true, Partitions: true, Crashes: true, MaxRaftLog: 50, MaxInflight: 4, Duration: 3 * time.Second})
+}
+
 func TestLinearizableDiskCrashes(t *testing.T) {
 	runCheck(t, Options{Seed: 6, Crashes: true, DiskRaft: true, MaxRaftLog: 100, Duration: 2 * time.Second})
 }

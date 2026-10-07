@@ -34,6 +34,7 @@ type ShardedOptions struct {
 	Crashes          bool
 	Unreliable       bool
 	MaxRaftLog       int
+	MaxInflight      int
 	Dir              string
 	Seed             uint64
 }
@@ -154,6 +155,7 @@ func (c *ShardedCluster) Start(gid int64, i int) error {
 		Transport:         &sim.RaftTransport{Net: c.Net, From: addr, Lookup: raftLookup},
 		ElectionTimeout:   100 * time.Millisecond,
 		HeartbeatInterval: 20 * time.Millisecond,
+		MaxInflight:       c.opts.MaxInflight,
 		MaxRaftLog:        c.opts.MaxRaftLog,
 		MemtableSize:      16 << 10,
 		GID:               gid,

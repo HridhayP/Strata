@@ -66,6 +66,7 @@ type Config struct {
 
 	ElectionTimeout   time.Duration
 	HeartbeatInterval time.Duration
+	MaxInflight       int // pipelined AppendEntries per follower (0: Raft default)
 	// MaxRaftLog is the number of log entries that triggers compaction.
 	MaxRaftLog   int
 	MemtableSize int
@@ -160,6 +161,7 @@ func NewServer(cfg Config) (*Server, error) {
 		ApplyCh:           s.applyCh,
 		ElectionTimeout:   cfg.ElectionTimeout,
 		HeartbeatInterval: cfg.HeartbeatInterval,
+		MaxInflight:       cfg.MaxInflight,
 		AppliedIndex:      s.applied,
 		SnapshotFn:        s.snapshot,
 		Observer:          cfg.Observer,

@@ -74,6 +74,7 @@ type Config struct {
 	HeartbeatInterval time.Duration
 	RPCTimeout        time.Duration
 	MaxEntriesPerMsg  int
+	MaxInflight       int // AppendEntries in flight per follower; >1 pipelines (default 1)
 
 	// AppliedIndex is the index the state machine has already made durable on
 	// its own. Raft resumes delivering entries after it.
@@ -135,13 +136,16 @@ type Raft struct {
 	nextIndex  map[int]uint64
 	matchIndex map[int]uint64
 	lastAck    map[int]time.Time
-	termStart  uint64 // index of this term's no-op entry
+	inflight   map[int]int  // AppendEntries awaiting a response
+	pipelined  map[int]bool // peer accepted its last append
+	termStart  uint64       // index of this term's no-op entry
 	proposed   map[uint64]time.Time
 	readSeq    uint64
 	readAcks   map[int]uint64
 	readers    []*readWaiter
 
 	kicks     map[int]chan struct{}
+	probes    map[int]chan struct{} // wakes a peer's read prober
 	syncKick  chan struct{}
 	applyCond *sync.Cond
 	stopped   bool
@@ -163,6 +167,9 @@ func New(cfg Config) (*Raft, error) {
 	if cfg.MaxEntriesPerMsg == 0 {
 		cfg.MaxEntriesPerMsg = 1024
 	}
+	if cfg.MaxInflight == 0 {
+		cfg.MaxInflight = 1
+	}
 	if cfg.Observer == nil {
 		cfg.Observer = nopObserver{}
 	}
@@ -181,6 +188,7 @@ func New(cfg Config) (*Raft, error) {
 		log:      append([]*raftpb.Entry{{Index: st.Compaction.Index, Term: st.Compaction.Term}}, st.Entries...),
 		snapshot: st.Snapshot,
 		kicks:    make(map[int]chan struct{}),
+		probes:   make(map[int]chan struct{}),
 		syncKick: make(chan struct{}, 1),
 		stopCh:   make(chan struct{}),
 	}
@@ -204,6 +212,7 @@ func New(cfg Config) (*Raft, error) {
 	for _, p := range cfg.Peers {
 		if p != r.me {
 			r.kicks[p] = make(chan struct{}, 1)
+			r.probes[p] = make(chan struct{}, 1)
 		}
 	}
 	r.resetElectionTimer()
@@ -332,6 +341,8 @@ func (r *Raft) becomeLeader() {
 	r.nextIndex = make(map[int]uint64)
 	r.matchIndex = make(map[int]uint64)
 	r.lastAck = make(map[int]time.Time)
+	r.inflight = make(map[int]int)
+	r.pipelined = make(map[int]bool)
 	r.readAcks = make(map[int]uint64)
 	r.proposed = make(map[uint64]time.Time)
 	now := time.Now()
@@ -348,8 +359,9 @@ func (r *Raft) becomeLeader() {
 	r.termStart = noop.Index
 	r.obs.LeaderChange(r.term, r.me)
 	for p := range r.kicks {
-		r.wg.Add(1)
+		r.wg.Add(2)
 		go r.replicator(p, r.term)
+		go r.prober(p, r.term)
 	}
 	r.kickSync()
 	r.advanceCommit() // single-node clusters commit on their own
@@ -419,8 +431,10 @@ func (r *Raft) kickSync() {
 	}
 }
 
-func (r *Raft) kickAll() {
-	for _, ch := range r.kicks {
+func (r *Raft) kickAll() { kick(r.kicks) }
+
+func kick(chans map[int]chan struct{}) {
+	for _, ch := range chans {
 		select {
 		case ch <- struct{}{}:
 		default:
@@ -585,72 +599,112 @@ func (r *Raft) replicator(peer int, term uint64) {
 	hb := time.NewTicker(r.cfg.HeartbeatInterval)
 	defer hb.Stop()
 	for {
+		heartbeat := false
 		select {
 		case <-r.stopCh:
 			return
 		case <-r.kicks[peer]:
 		case <-hb.C:
+			heartbeat = true
 		}
-		for {
-			more, alive := r.replicateOnce(peer, term)
-			if !alive {
-				return
-			}
-			if !more {
-				break
-			}
+		if !r.replicate(peer, term, heartbeat) {
+			return
 		}
 	}
 }
 
-// replicateOnce sends one AppendEntries or InstallSnapshot to peer. more
-// reports whether there is more to send right away; alive is false once
-// this replicator's term of leadership is over.
-func (r *Raft) replicateOnce(peer int, term uint64) (more, alive bool) {
-	r.mu.Lock()
-	if r.stopped || r.role != leader || r.term != term {
+// replicate sends whatever peer needs now: an InstallSnapshot, or as many
+// AppendEntries as the pipeline window allows. Responses are handled on
+// their own goroutines, which kick the replicator to refill the window.
+// It returns false once this replicator's term of leadership is over.
+func (r *Raft) replicate(peer int, term uint64, heartbeat bool) bool {
+	for {
+		r.mu.Lock()
+		if r.stopped || r.role != leader || r.term != term {
+			r.mu.Unlock()
+			return false
+		}
+		if r.nextIndex[peer] <= r.base() {
+			if r.inflight[peer] > 0 {
+				r.mu.Unlock()
+				return true // wait for outstanding appends first
+			}
+			more, alive := r.sendSnapshot(peer, term) // releases r.mu
+			if !alive || !more {
+				return alive
+			}
+			continue
+		}
+		// A peer that accepted its last append gets a window of requests,
+		// each sent as if the earlier ones succeed; any other peer is probed
+		// one request at a time until its log position is known.
+		window := 1
+		if r.pipelined[peer] {
+			window = r.cfg.MaxInflight
+		}
+		next := r.nextIndex[peer]
+		pending := next <= r.lastIndex()
+		if r.inflight[peer] >= window || !(pending || heartbeat && r.inflight[peer] == 0) {
+			r.mu.Unlock()
+			return true
+		}
+		heartbeat = false
+		prevIdx := next - 1
+		prevTerm, _ := r.termAt(prevIdx)
+		hi := min(r.lastIndex(), prevIdx+uint64(r.cfg.MaxEntriesPerMsg))
+		var ents []*raftpb.Entry
+		if hi >= next {
+			ents = slices.Clone(r.log[next-r.base() : hi-r.base()+1])
+		}
+		req := &raftpb.AppendEntriesRequest{
+			Group:        r.cfg.Group,
+			Term:         term,
+			LeaderId:     int32(r.me),
+			PrevLogIndex: prevIdx,
+			PrevLogTerm:  prevTerm,
+			Entries:      ents,
+			LeaderCommit: r.commitIndex,
+			ReadCtx:      r.readSeq,
+		}
+		if r.pipelined[peer] {
+			r.nextIndex[peer] = hi + 1
+		}
+		r.inflight[peer]++
+		r.wg.Add(1)
 		r.mu.Unlock()
-		return false, false
+		go r.sendAppend(peer, term, req)
 	}
-	if r.nextIndex[peer] <= r.base() {
-		return r.sendSnapshot(peer, term) // releases r.mu
-	}
-	next := r.nextIndex[peer]
-	prevIdx := next - 1
-	prevTerm, _ := r.termAt(prevIdx)
-	hi := min(r.lastIndex(), prevIdx+uint64(r.cfg.MaxEntriesPerMsg))
-	var ents []*raftpb.Entry
-	if hi >= next {
-		ents = slices.Clone(r.log[next-r.base() : hi-r.base()+1])
-	}
-	req := &raftpb.AppendEntriesRequest{
-		Group:        r.cfg.Group,
-		Term:         term,
-		LeaderId:     int32(r.me),
-		PrevLogIndex: prevIdx,
-		PrevLogTerm:  prevTerm,
-		Entries:      ents,
-		LeaderCommit: r.commitIndex,
-		ReadCtx:      r.readSeq,
-	}
-	r.mu.Unlock()
+}
 
+func (r *Raft) sendAppend(peer int, term uint64, req *raftpb.AppendEntriesRequest) {
+	defer r.wg.Done()
 	ctx, cancel := context.WithTimeout(context.Background(), r.cfg.RPCTimeout)
 	resp, err := r.cfg.Transport.AppendEntries(ctx, peer, req)
 	cancel()
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.stopped || r.role != leader || r.term != term {
+		if err == nil && resp.Term > r.term {
+			r.becomeFollower(resp.Term, None)
+			r.resetElectionTimer()
+		}
+		return
+	}
+	r.inflight[peer]--
 	if err != nil {
-		return false, true
+		// Requests sent after this one will be rejected; restart from the
+		// last known match. The next heartbeat retries.
+		if r.pipelined[peer] {
+			r.pipelined[peer] = false
+			r.nextIndex[peer] = r.matchIndex[peer] + 1
+		}
+		return
 	}
 	if resp.Term > r.term {
 		r.becomeFollower(resp.Term, None)
 		r.resetElectionTimer()
-		return false, false
-	}
-	if r.stopped || r.role != leader || r.term != term {
-		return false, false
+		return
 	}
 	r.lastAck[peer] = time.Now()
 	if resp.ReadCtx > r.readAcks[peer] {
@@ -658,7 +712,7 @@ func (r *Raft) replicateOnce(peer int, term uint64) (more, alive bool) {
 		r.checkReads()
 	}
 	if resp.Success {
-		match := prevIdx + uint64(len(ents))
+		match := req.PrevLogIndex + uint64(len(req.Entries))
 		if match > r.matchIndex[peer] {
 			r.matchIndex[peer] = match
 			r.advanceCommit()
@@ -666,11 +720,15 @@ func (r *Raft) replicateOnce(peer int, term uint64) (more, alive bool) {
 		if match+1 > r.nextIndex[peer] {
 			r.nextIndex[peer] = match + 1
 		}
+		r.pipelined[peer] = true
 		r.obs.ReplicationLag(peer, r.lastIndex()-r.matchIndex[peer])
-		return r.nextIndex[peer] <= r.lastIndex(), true
+		if r.nextIndex[peer] <= r.lastIndex() {
+			kick(map[int]chan struct{}{peer: r.kicks[peer]})
+		}
+		return
 	}
 	// Rejected: jump back using the follower's conflict hint.
-	next = resp.ConflictIndex
+	next := resp.ConflictIndex
 	if resp.ConflictTerm != 0 {
 		for i := r.lastIndex(); i > r.base(); i-- {
 			if t, _ := r.termAt(i); t == resp.ConflictTerm {
@@ -683,7 +741,55 @@ func (r *Raft) replicateOnce(peer int, term uint64) (more, alive bool) {
 	}
 	next = max(next, r.matchIndex[peer]+1, 1)
 	r.nextIndex[peer] = min(next, r.lastIndex()+1)
-	return true, true
+	r.pipelined[peer] = false
+	kick(map[int]chan struct{}{peer: r.kicks[peer]})
+}
+
+// prober confirms leadership for ReadIndex rounds. It runs beside the
+// replicator so that a read never waits for an AppendEntries that is stuck
+// behind a follower's fsync. Reads that arrive while a probe is in flight
+// share the next one.
+func (r *Raft) prober(peer int, term uint64) {
+	defer r.wg.Done()
+	for {
+		select {
+		case <-r.stopCh:
+			return
+		case <-r.probes[peer]:
+		}
+		r.mu.Lock()
+		if r.stopped || r.role != leader || r.term != term {
+			r.mu.Unlock()
+			return
+		}
+		req := &raftpb.AppendEntriesRequest{
+			Group:     r.cfg.Group,
+			Term:      term,
+			LeaderId:  int32(r.me),
+			ReadCtx:   r.readSeq,
+			ReadProbe: true,
+		}
+		r.mu.Unlock()
+
+		ctx, cancel := context.WithTimeout(context.Background(), r.cfg.RPCTimeout)
+		resp, err := r.cfg.Transport.AppendEntries(ctx, peer, req)
+		cancel()
+		if err != nil {
+			continue // the replicator's heartbeats carry read_ctx too
+		}
+		r.mu.Lock()
+		if resp.Term > r.term {
+			r.becomeFollower(resp.Term, None)
+			r.resetElectionTimer()
+		} else if !r.stopped && r.role == leader && r.term == term && resp.Term == term {
+			r.lastAck[peer] = time.Now()
+			if resp.ReadCtx > r.readAcks[peer] {
+				r.readAcks[peer] = resp.ReadCtx
+				r.checkReads()
+			}
+		}
+		r.mu.Unlock()
+	}
 }
 
 // sendSnapshot is called with r.mu held and releases it.
@@ -784,13 +890,26 @@ func (r *Raft) HandleAppendEntries(req *raftpb.AppendEntriesRequest) *raftpb.App
 	if r.stopped || req.Term < r.term {
 		return resp
 	}
-	if req.Term > r.term || r.role != follower || r.leaderID != int(req.LeaderId) {
+	termChanged := req.Term > r.term
+	if termChanged || r.role != follower || r.leaderID != int(req.LeaderId) {
 		r.becomeFollower(req.Term, int(req.LeaderId))
 	}
 	resp.Term = r.term
 	resp.ReadCtx = req.ReadCtx
 	r.lastLeaderContact = time.Now()
 	r.resetElectionTimer()
+	if req.ReadProbe {
+		// Acknowledging the leader's term is all a read needs. Only a term
+		// change has to reach disk first.
+		if termChanged {
+			term := r.term
+			r.syncLocked()
+			if r.stopped || r.term != term {
+				return &raftpb.AppendEntriesResponse{Term: r.term}
+			}
+		}
+		return resp
+	}
 
 	prevIdx, prevTerm, ents := req.PrevLogIndex, req.PrevLogTerm, req.Entries
 	if prevIdx < r.base() {
@@ -929,7 +1048,7 @@ func (r *Raft) ReadIndex(ctx context.Context) (uint64, error) {
 		w.index = r.commitIndex
 	}
 	r.readers = append(r.readers, w)
-	r.kickAll()
+	kick(r.probes)
 	r.checkReads()
 	r.mu.Unlock()
 

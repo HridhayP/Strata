@@ -41,6 +41,7 @@ type Options struct {
 	OpsPerClient int
 
 	MaxRaftLog      int // small values force frequent compaction/snapshots
+	MaxInflight     int // AppendEntries in flight per follower (0: Raft default)
 	ElectionTimeout time.Duration
 	Dir             string
 	Seed            uint64
@@ -133,6 +134,7 @@ func (c *Cluster) Start(i int) error {
 		}},
 		ElectionTimeout:   c.opts.ElectionTimeout,
 		HeartbeatInterval: c.opts.ElectionTimeout / 5,
+		MaxInflight:       c.opts.MaxInflight,
 		MaxRaftLog:        c.opts.MaxRaftLog,
 		MemtableSize:      16 << 10,
 	})
