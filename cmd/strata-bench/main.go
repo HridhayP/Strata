@@ -48,6 +48,9 @@ type Report struct {
 	ReadP99Ms  float64 `json:"read_p99_ms"`
 	WriteP50Ms float64 `json:"write_p50_ms"`
 	WriteP99Ms float64 `json:"write_p99_ms"`
+	// PerSecond is completed operations in each second of the measurement,
+	// to show stalls and drift that whole-run percentiles hide.
+	PerSecond []int64 `json:"ops_per_second"`
 }
 
 func main() {
@@ -125,6 +128,7 @@ func main() {
 		wg        sync.WaitGroup
 		mu        sync.Mutex
 		all       []sample
+		completed atomic.Int64
 	)
 	for c := 0; c < *clients; c++ {
 		wg.Add(1)
@@ -154,6 +158,7 @@ func main() {
 					continue
 				}
 				local = append(local, sample{lat, read})
+				completed.Add(1)
 			}
 			mu.Lock()
 			all = append(all, local...)
@@ -165,7 +170,13 @@ func main() {
 	measuring.Store(true)
 	start := time.Now()
 	log.Printf("measuring for %v with %d clients", *duration, *clients)
-	time.Sleep(*duration)
+	var perSec []int64
+	tick := time.NewTicker(time.Second)
+	for end := start.Add(*duration); time.Now().Before(end); {
+		<-tick.C
+		perSec = append(perSec, completed.Swap(0))
+	}
+	tick.Stop()
 	measuring.Store(false)
 	elapsed := time.Since(start)
 	stop.Store(true)
@@ -187,6 +198,7 @@ func main() {
 		P50Ms:     pct(lat, 0.50), P99Ms: pct(lat, 0.99), P999Ms: pct(lat, 0.999),
 		ReadP50Ms: pct(rlat, 0.50), ReadP99Ms: pct(rlat, 0.99),
 		WriteP50Ms: pct(wlat, 0.50), WriteP99Ms: pct(wlat, 0.99),
+		PerSecond: perSec,
 	}
 	b, _ := json.MarshalIndent(r, "", "  ")
 	fmt.Println(string(b))
