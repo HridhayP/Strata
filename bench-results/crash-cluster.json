@@ -1,0 +1,14 @@
+{
+  "mode": "cluster",
+  "runs": 1000,
+  "passed": 1000,
+  "failed": 0,
+  "seed": 1,
+  "wall_time_s": 2249.1401375,
+  "kills": {
+    "all": 340,
+    "leader": 337,
+    "minority": 323
+  },
+  "acked_writes_checked": 1257432
+}

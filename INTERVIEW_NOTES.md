@@ -20,7 +20,7 @@ The LSM's own WAL is off in the KV service. The Raft log is the write-ahead log.
 
 ### 5. What does fsync batching (group commit) buy you, and how is it built?
 
-`wal.Sync(seq)` is called concurrently. The first caller becomes the "sync leader": it flushes the buffer and fsyncs everything written so far. Callers that arrive in the meantime wait on a condition variable, and one fsync covers all of them. Raft does the same: a `syncer` goroutine makes the log durable, and the leader counts its own durable index toward the commit quorum. On this machine one fsync costs about 1 ms. With 16 concurrent appenders, batched appends cost 7.3 µs each versus 1.08 ms each fsynced individually. End-to-end numbers are in RESULTS.md.
+`wal.Sync(seq)` is called concurrently. The first caller becomes the "sync leader": it flushes the buffer and fsyncs everything written so far. Callers that arrive in the meantime wait on a condition variable, and one fsync covers all of them. Raft does the same: a `syncer` goroutine makes the log durable, and the leader counts its own durable index toward the commit quorum. With 16 parallel appenders on this machine, a durable append costs 12–15 µs with batching and about 1.2 ms when every append is fsynced individually (`bench-results/wal-appendsync.txt`). On the 5-node cluster, write throughput was 25.2x higher with batching on (12,428 vs 493 ops/s at 64 clients).
 
 ### 6. How does sharding work and why bounded loads?
 

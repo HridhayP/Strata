@@ -1,0 +1,12 @@
+goos: windows
+goarch: amd64
+pkg: github.com/HridhayP/strata/storage/wal
+cpu: Intel(R) Core(TM) Ultra 9 185H
+BenchmarkAppendSync/noBatch=false-22         	  148951	     14938 ns/op
+BenchmarkAppendSync/noBatch=false-22         	  158576	     15324 ns/op
+BenchmarkAppendSync/noBatch=false-22         	  208742	     12158 ns/op
+BenchmarkAppendSync/noBatch=true-22          	    1806	   1229042 ns/op
+BenchmarkAppendSync/noBatch=true-22          	    2064	   1202568 ns/op
+BenchmarkAppendSync/noBatch=true-22          	    1786	   1206171 ns/op
+PASS
+ok  	github.com/HridhayP/strata/storage/wal	20.881s
