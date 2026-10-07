@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package strata.kv;
 
+import "ctrl.proto";
+
 option go_package = "github.com/HridhayP/strata/proto/kvpb";
 
 enum Op {
@@ -16,6 +18,7 @@ enum Err {
   WRONG_LEADER = 2;
   WRONG_GROUP = 3; // this replica group does not own the key's shard
   TIMEOUT = 4;
+  NOT_READY = 5;   // migration source has not reached the requested config
 }
 
 message Request {
@@ -34,13 +37,67 @@ message Response {
   int32 leader_hint = 3; // -1 if unknown
 }
 
-// Command is what the KV state machine stores in the Raft log.
+// ShardData carries one shard's keys and client dedup records between groups.
+message ShardData {
+  int32 shard = 1;
+  bytes pairs = 2; // uvarint-length-prefixed key/value pairs (LSM keys)
+}
+
+message PullShardsRequest {
+  string group = 1;
+  uint64 config_num = 2; // the config in which the caller gains the shards
+  repeated int32 shards = 3;
+}
+
+message PullShardsResponse {
+  Err err = 1;
+  repeated ShardData shards = 2;
+  int32 leader_hint = 3;
+}
+
+message DeleteShardsRequest {
+  string group = 1;
+  uint64 config_num = 2;
+  repeated int32 shards = 3;
+}
+
+message DeleteShardsResponse {
+  Err err = 1;
+  int32 leader_hint = 2;
+}
+
+// Commands stored in a KV group's Raft log.
+message ConfigChange {
+  strata.ctrl.Config config = 1;
+}
+
+message InstallShards {
+  uint64 config_num = 1;
+  repeated ShardData shards = 2;
+}
+
+message DeleteShards {
+  uint64 config_num = 1;
+  repeated int32 shards = 2;
+}
+
+message ShardsCleaned {
+  uint64 config_num = 1;
+  repeated int32 shards = 2;
+}
+
 message Command {
   oneof cmd {
     Request client = 1;
+    ConfigChange config = 2;
+    InstallShards install = 3;
+    DeleteShards delete = 4;
+    ShardsCleaned cleaned = 5;
   }
 }
 
 service KV {
   rpc Do(Request) returns (Response);
+  rpc PullShards(PullShardsRequest) returns (PullShardsResponse);
+  rpc DeleteShards(DeleteShardsRequest) returns (DeleteShardsResponse);
 }

@@ -19,7 +19,9 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	KV_Do_FullMethodName = "/strata.kv.KV/Do"
+	KV_Do_FullMethodName           = "/strata.kv.KV/Do"
+	KV_PullShards_FullMethodName   = "/strata.kv.KV/PullShards"
+	KV_DeleteShards_FullMethodName = "/strata.kv.KV/DeleteShards"
 )
 
 // KVClient is the client API for KV service.
@@ -27,6 +29,8 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type KVClient interface {
 	Do(ctx context.Context, in *Request, opts ...grpc.CallOption) (*Response, error)
+	PullShards(ctx context.Context, in *PullShardsRequest, opts ...grpc.CallOption) (*PullShardsResponse, error)
+	DeleteShards(ctx context.Context, in *DeleteShardsRequest, opts ...grpc.CallOption) (*DeleteShardsResponse, error)
 }
 
 type kVClient struct {
@@ -47,11 +51,33 @@ func (c *kVClient) Do(ctx context.Context, in *Request, opts ...grpc.CallOption)
 	return out, nil
 }
 
+func (c *kVClient) PullShards(ctx context.Context, in *PullShardsRequest, opts ...grpc.CallOption) (*PullShardsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PullShardsResponse)
+	err := c.cc.Invoke(ctx, KV_PullShards_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *kVClient) DeleteShards(ctx context.Context, in *DeleteShardsRequest, opts ...grpc.CallOption) (*DeleteShardsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteShardsResponse)
+	err := c.cc.Invoke(ctx, KV_DeleteShards_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // KVServer is the server API for KV service.
 // All implementations must embed UnimplementedKVServer
 // for forward compatibility.
 type KVServer interface {
 	Do(context.Context, *Request) (*Response, error)
+	PullShards(context.Context, *PullShardsRequest) (*PullShardsResponse, error)
+	DeleteShards(context.Context, *DeleteShardsRequest) (*DeleteShardsResponse, error)
 	mustEmbedUnimplementedKVServer()
 }
 
@@ -64,6 +90,12 @@ type UnimplementedKVServer struct{}
 
 func (UnimplementedKVServer) Do(context.Context, *Request) (*Response, error) {
 	return nil, status.Error(codes.Unimplemented, "method Do not implemented")
+}
+func (UnimplementedKVServer) PullShards(context.Context, *PullShardsRequest) (*PullShardsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PullShards not implemented")
+}
+func (UnimplementedKVServer) DeleteShards(context.Context, *DeleteShardsRequest) (*DeleteShardsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteShards not implemented")
 }
 func (UnimplementedKVServer) mustEmbedUnimplementedKVServer() {}
 func (UnimplementedKVServer) testEmbeddedByValue()            {}
@@ -104,6 +136,42 @@ func _KV_Do_Handler(srv interface{}, ctx context.Context, dec func(interface{}) 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _KV_PullShards_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PullShardsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KVServer).PullShards(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KV_PullShards_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KVServer).PullShards(ctx, req.(*PullShardsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KV_DeleteShards_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteShardsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KVServer).DeleteShards(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KV_DeleteShards_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KVServer).DeleteShards(ctx, req.(*DeleteShardsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // KV_ServiceDesc is the grpc.ServiceDesc for KV service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -114,6 +182,14 @@ var KV_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Do",
 			Handler:    _KV_Do_Handler,
+		},
+		{
+			MethodName: "PullShards",
+			Handler:    _KV_PullShards_Handler,
+		},
+		{
+			MethodName: "DeleteShards",
+			Handler:    _KV_DeleteShards_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

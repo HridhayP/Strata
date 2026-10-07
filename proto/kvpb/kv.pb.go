@@ -7,6 +7,7 @@
 package kvpb
 
 import (
+	ctrlpb "github.com/HridhayP/strata/proto/ctrlpb"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -78,6 +79,7 @@ const (
 	Err_WRONG_LEADER Err = 2
 	Err_WRONG_GROUP  Err = 3 // this replica group does not own the key's shard
 	Err_TIMEOUT      Err = 4
+	Err_NOT_READY    Err = 5 // migration source has not reached the requested config
 )
 
 // Enum value maps for Err.
@@ -88,6 +90,7 @@ var (
 		2: "WRONG_LEADER",
 		3: "WRONG_GROUP",
 		4: "TIMEOUT",
+		5: "NOT_READY",
 	}
 	Err_value = map[string]int32{
 		"OK":           0,
@@ -95,6 +98,7 @@ var (
 		"WRONG_LEADER": 2,
 		"WRONG_GROUP":  3,
 		"TIMEOUT":      4,
+		"NOT_READY":    5,
 	}
 )
 
@@ -270,12 +274,501 @@ func (x *Response) GetLeaderHint() int32 {
 	return 0
 }
 
-// Command is what the KV state machine stores in the Raft log.
+// ShardData carries one shard's keys and client dedup records between groups.
+type ShardData struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Shard         int32                  `protobuf:"varint,1,opt,name=shard,proto3" json:"shard,omitempty"`
+	Pairs         []byte                 `protobuf:"bytes,2,opt,name=pairs,proto3" json:"pairs,omitempty"` // uvarint-length-prefixed key/value pairs (LSM keys)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ShardData) Reset() {
+	*x = ShardData{}
+	mi := &file_kv_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ShardData) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ShardData) ProtoMessage() {}
+
+func (x *ShardData) ProtoReflect() protoreflect.Message {
+	mi := &file_kv_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ShardData.ProtoReflect.Descriptor instead.
+func (*ShardData) Descriptor() ([]byte, []int) {
+	return file_kv_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *ShardData) GetShard() int32 {
+	if x != nil {
+		return x.Shard
+	}
+	return 0
+}
+
+func (x *ShardData) GetPairs() []byte {
+	if x != nil {
+		return x.Pairs
+	}
+	return nil
+}
+
+type PullShardsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Group         string                 `protobuf:"bytes,1,opt,name=group,proto3" json:"group,omitempty"`
+	ConfigNum     uint64                 `protobuf:"varint,2,opt,name=config_num,json=configNum,proto3" json:"config_num,omitempty"` // the config in which the caller gains the shards
+	Shards        []int32                `protobuf:"varint,3,rep,packed,name=shards,proto3" json:"shards,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PullShardsRequest) Reset() {
+	*x = PullShardsRequest{}
+	mi := &file_kv_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PullShardsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PullShardsRequest) ProtoMessage() {}
+
+func (x *PullShardsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_kv_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PullShardsRequest.ProtoReflect.Descriptor instead.
+func (*PullShardsRequest) Descriptor() ([]byte, []int) {
+	return file_kv_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *PullShardsRequest) GetGroup() string {
+	if x != nil {
+		return x.Group
+	}
+	return ""
+}
+
+func (x *PullShardsRequest) GetConfigNum() uint64 {
+	if x != nil {
+		return x.ConfigNum
+	}
+	return 0
+}
+
+func (x *PullShardsRequest) GetShards() []int32 {
+	if x != nil {
+		return x.Shards
+	}
+	return nil
+}
+
+type PullShardsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Err           Err                    `protobuf:"varint,1,opt,name=err,proto3,enum=strata.kv.Err" json:"err,omitempty"`
+	Shards        []*ShardData           `protobuf:"bytes,2,rep,name=shards,proto3" json:"shards,omitempty"`
+	LeaderHint    int32                  `protobuf:"varint,3,opt,name=leader_hint,json=leaderHint,proto3" json:"leader_hint,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PullShardsResponse) Reset() {
+	*x = PullShardsResponse{}
+	mi := &file_kv_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PullShardsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PullShardsResponse) ProtoMessage() {}
+
+func (x *PullShardsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_kv_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PullShardsResponse.ProtoReflect.Descriptor instead.
+func (*PullShardsResponse) Descriptor() ([]byte, []int) {
+	return file_kv_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *PullShardsResponse) GetErr() Err {
+	if x != nil {
+		return x.Err
+	}
+	return Err_OK
+}
+
+func (x *PullShardsResponse) GetShards() []*ShardData {
+	if x != nil {
+		return x.Shards
+	}
+	return nil
+}
+
+func (x *PullShardsResponse) GetLeaderHint() int32 {
+	if x != nil {
+		return x.LeaderHint
+	}
+	return 0
+}
+
+type DeleteShardsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Group         string                 `protobuf:"bytes,1,opt,name=group,proto3" json:"group,omitempty"`
+	ConfigNum     uint64                 `protobuf:"varint,2,opt,name=config_num,json=configNum,proto3" json:"config_num,omitempty"`
+	Shards        []int32                `protobuf:"varint,3,rep,packed,name=shards,proto3" json:"shards,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteShardsRequest) Reset() {
+	*x = DeleteShardsRequest{}
+	mi := &file_kv_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteShardsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteShardsRequest) ProtoMessage() {}
+
+func (x *DeleteShardsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_kv_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteShardsRequest.ProtoReflect.Descriptor instead.
+func (*DeleteShardsRequest) Descriptor() ([]byte, []int) {
+	return file_kv_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *DeleteShardsRequest) GetGroup() string {
+	if x != nil {
+		return x.Group
+	}
+	return ""
+}
+
+func (x *DeleteShardsRequest) GetConfigNum() uint64 {
+	if x != nil {
+		return x.ConfigNum
+	}
+	return 0
+}
+
+func (x *DeleteShardsRequest) GetShards() []int32 {
+	if x != nil {
+		return x.Shards
+	}
+	return nil
+}
+
+type DeleteShardsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Err           Err                    `protobuf:"varint,1,opt,name=err,proto3,enum=strata.kv.Err" json:"err,omitempty"`
+	LeaderHint    int32                  `protobuf:"varint,2,opt,name=leader_hint,json=leaderHint,proto3" json:"leader_hint,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteShardsResponse) Reset() {
+	*x = DeleteShardsResponse{}
+	mi := &file_kv_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteShardsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteShardsResponse) ProtoMessage() {}
+
+func (x *DeleteShardsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_kv_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteShardsResponse.ProtoReflect.Descriptor instead.
+func (*DeleteShardsResponse) Descriptor() ([]byte, []int) {
+	return file_kv_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *DeleteShardsResponse) GetErr() Err {
+	if x != nil {
+		return x.Err
+	}
+	return Err_OK
+}
+
+func (x *DeleteShardsResponse) GetLeaderHint() int32 {
+	if x != nil {
+		return x.LeaderHint
+	}
+	return 0
+}
+
+// Commands stored in a KV group's Raft log.
+type ConfigChange struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Config        *ctrlpb.Config         `protobuf:"bytes,1,opt,name=config,proto3" json:"config,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ConfigChange) Reset() {
+	*x = ConfigChange{}
+	mi := &file_kv_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConfigChange) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConfigChange) ProtoMessage() {}
+
+func (x *ConfigChange) ProtoReflect() protoreflect.Message {
+	mi := &file_kv_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ConfigChange.ProtoReflect.Descriptor instead.
+func (*ConfigChange) Descriptor() ([]byte, []int) {
+	return file_kv_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *ConfigChange) GetConfig() *ctrlpb.Config {
+	if x != nil {
+		return x.Config
+	}
+	return nil
+}
+
+type InstallShards struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ConfigNum     uint64                 `protobuf:"varint,1,opt,name=config_num,json=configNum,proto3" json:"config_num,omitempty"`
+	Shards        []*ShardData           `protobuf:"bytes,2,rep,name=shards,proto3" json:"shards,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InstallShards) Reset() {
+	*x = InstallShards{}
+	mi := &file_kv_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InstallShards) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InstallShards) ProtoMessage() {}
+
+func (x *InstallShards) ProtoReflect() protoreflect.Message {
+	mi := &file_kv_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InstallShards.ProtoReflect.Descriptor instead.
+func (*InstallShards) Descriptor() ([]byte, []int) {
+	return file_kv_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *InstallShards) GetConfigNum() uint64 {
+	if x != nil {
+		return x.ConfigNum
+	}
+	return 0
+}
+
+func (x *InstallShards) GetShards() []*ShardData {
+	if x != nil {
+		return x.Shards
+	}
+	return nil
+}
+
+type DeleteShards struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ConfigNum     uint64                 `protobuf:"varint,1,opt,name=config_num,json=configNum,proto3" json:"config_num,omitempty"`
+	Shards        []int32                `protobuf:"varint,2,rep,packed,name=shards,proto3" json:"shards,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteShards) Reset() {
+	*x = DeleteShards{}
+	mi := &file_kv_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteShards) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteShards) ProtoMessage() {}
+
+func (x *DeleteShards) ProtoReflect() protoreflect.Message {
+	mi := &file_kv_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteShards.ProtoReflect.Descriptor instead.
+func (*DeleteShards) Descriptor() ([]byte, []int) {
+	return file_kv_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *DeleteShards) GetConfigNum() uint64 {
+	if x != nil {
+		return x.ConfigNum
+	}
+	return 0
+}
+
+func (x *DeleteShards) GetShards() []int32 {
+	if x != nil {
+		return x.Shards
+	}
+	return nil
+}
+
+type ShardsCleaned struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ConfigNum     uint64                 `protobuf:"varint,1,opt,name=config_num,json=configNum,proto3" json:"config_num,omitempty"`
+	Shards        []int32                `protobuf:"varint,2,rep,packed,name=shards,proto3" json:"shards,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ShardsCleaned) Reset() {
+	*x = ShardsCleaned{}
+	mi := &file_kv_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ShardsCleaned) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ShardsCleaned) ProtoMessage() {}
+
+func (x *ShardsCleaned) ProtoReflect() protoreflect.Message {
+	mi := &file_kv_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ShardsCleaned.ProtoReflect.Descriptor instead.
+func (*ShardsCleaned) Descriptor() ([]byte, []int) {
+	return file_kv_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *ShardsCleaned) GetConfigNum() uint64 {
+	if x != nil {
+		return x.ConfigNum
+	}
+	return 0
+}
+
+func (x *ShardsCleaned) GetShards() []int32 {
+	if x != nil {
+		return x.Shards
+	}
+	return nil
+}
+
 type Command struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Cmd:
 	//
 	//	*Command_Client
+	//	*Command_Config
+	//	*Command_Install
+	//	*Command_Delete
+	//	*Command_Cleaned
 	Cmd           isCommand_Cmd `protobuf_oneof:"cmd"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -283,7 +776,7 @@ type Command struct {
 
 func (x *Command) Reset() {
 	*x = Command{}
-	mi := &file_kv_proto_msgTypes[2]
+	mi := &file_kv_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -295,7 +788,7 @@ func (x *Command) String() string {
 func (*Command) ProtoMessage() {}
 
 func (x *Command) ProtoReflect() protoreflect.Message {
-	mi := &file_kv_proto_msgTypes[2]
+	mi := &file_kv_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -308,7 +801,7 @@ func (x *Command) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Command.ProtoReflect.Descriptor instead.
 func (*Command) Descriptor() ([]byte, []int) {
-	return file_kv_proto_rawDescGZIP(), []int{2}
+	return file_kv_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *Command) GetCmd() isCommand_Cmd {
@@ -327,6 +820,42 @@ func (x *Command) GetClient() *Request {
 	return nil
 }
 
+func (x *Command) GetConfig() *ConfigChange {
+	if x != nil {
+		if x, ok := x.Cmd.(*Command_Config); ok {
+			return x.Config
+		}
+	}
+	return nil
+}
+
+func (x *Command) GetInstall() *InstallShards {
+	if x != nil {
+		if x, ok := x.Cmd.(*Command_Install); ok {
+			return x.Install
+		}
+	}
+	return nil
+}
+
+func (x *Command) GetDelete() *DeleteShards {
+	if x != nil {
+		if x, ok := x.Cmd.(*Command_Delete); ok {
+			return x.Delete
+		}
+	}
+	return nil
+}
+
+func (x *Command) GetCleaned() *ShardsCleaned {
+	if x != nil {
+		if x, ok := x.Cmd.(*Command_Cleaned); ok {
+			return x.Cleaned
+		}
+	}
+	return nil
+}
+
 type isCommand_Cmd interface {
 	isCommand_Cmd()
 }
@@ -335,13 +864,38 @@ type Command_Client struct {
 	Client *Request `protobuf:"bytes,1,opt,name=client,proto3,oneof"`
 }
 
+type Command_Config struct {
+	Config *ConfigChange `protobuf:"bytes,2,opt,name=config,proto3,oneof"`
+}
+
+type Command_Install struct {
+	Install *InstallShards `protobuf:"bytes,3,opt,name=install,proto3,oneof"`
+}
+
+type Command_Delete struct {
+	Delete *DeleteShards `protobuf:"bytes,4,opt,name=delete,proto3,oneof"`
+}
+
+type Command_Cleaned struct {
+	Cleaned *ShardsCleaned `protobuf:"bytes,5,opt,name=cleaned,proto3,oneof"`
+}
+
 func (*Command_Client) isCommand_Cmd() {}
+
+func (*Command_Config) isCommand_Cmd() {}
+
+func (*Command_Install) isCommand_Cmd() {}
+
+func (*Command_Delete) isCommand_Cmd() {}
+
+func (*Command_Cleaned) isCommand_Cmd() {}
 
 var File_kv_proto protoreflect.FileDescriptor
 
 const file_kv_proto_rawDesc = "" +
 	"\n" +
-	"\bkv.proto\x12\tstrata.kv\"\x95\x01\n" +
+	"\bkv.proto\x12\tstrata.kv\x1a\n" +
+	"ctrl.proto\"\x95\x01\n" +
 	"\aRequest\x12\x14\n" +
 	"\x05group\x18\x01 \x01(\tR\x05group\x12\x1d\n" +
 	"\x02op\x18\x02 \x01(\x0e2\r.strata.kv.OpR\x02op\x12\x10\n" +
@@ -353,24 +907,68 @@ const file_kv_proto_rawDesc = "" +
 	"\x03err\x18\x01 \x01(\x0e2\x0e.strata.kv.ErrR\x03err\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\fR\x05value\x12\x1f\n" +
 	"\vleader_hint\x18\x03 \x01(\x05R\n" +
-	"leaderHint\">\n" +
+	"leaderHint\"7\n" +
+	"\tShardData\x12\x14\n" +
+	"\x05shard\x18\x01 \x01(\x05R\x05shard\x12\x14\n" +
+	"\x05pairs\x18\x02 \x01(\fR\x05pairs\"`\n" +
+	"\x11PullShardsRequest\x12\x14\n" +
+	"\x05group\x18\x01 \x01(\tR\x05group\x12\x1d\n" +
+	"\n" +
+	"config_num\x18\x02 \x01(\x04R\tconfigNum\x12\x16\n" +
+	"\x06shards\x18\x03 \x03(\x05R\x06shards\"\x85\x01\n" +
+	"\x12PullShardsResponse\x12 \n" +
+	"\x03err\x18\x01 \x01(\x0e2\x0e.strata.kv.ErrR\x03err\x12,\n" +
+	"\x06shards\x18\x02 \x03(\v2\x14.strata.kv.ShardDataR\x06shards\x12\x1f\n" +
+	"\vleader_hint\x18\x03 \x01(\x05R\n" +
+	"leaderHint\"b\n" +
+	"\x13DeleteShardsRequest\x12\x14\n" +
+	"\x05group\x18\x01 \x01(\tR\x05group\x12\x1d\n" +
+	"\n" +
+	"config_num\x18\x02 \x01(\x04R\tconfigNum\x12\x16\n" +
+	"\x06shards\x18\x03 \x03(\x05R\x06shards\"Y\n" +
+	"\x14DeleteShardsResponse\x12 \n" +
+	"\x03err\x18\x01 \x01(\x0e2\x0e.strata.kv.ErrR\x03err\x12\x1f\n" +
+	"\vleader_hint\x18\x02 \x01(\x05R\n" +
+	"leaderHint\";\n" +
+	"\fConfigChange\x12+\n" +
+	"\x06config\x18\x01 \x01(\v2\x13.strata.ctrl.ConfigR\x06config\"\\\n" +
+	"\rInstallShards\x12\x1d\n" +
+	"\n" +
+	"config_num\x18\x01 \x01(\x04R\tconfigNum\x12,\n" +
+	"\x06shards\x18\x02 \x03(\v2\x14.strata.kv.ShardDataR\x06shards\"E\n" +
+	"\fDeleteShards\x12\x1d\n" +
+	"\n" +
+	"config_num\x18\x01 \x01(\x04R\tconfigNum\x12\x16\n" +
+	"\x06shards\x18\x02 \x03(\x05R\x06shards\"F\n" +
+	"\rShardsCleaned\x12\x1d\n" +
+	"\n" +
+	"config_num\x18\x01 \x01(\x04R\tconfigNum\x12\x16\n" +
+	"\x06shards\x18\x02 \x03(\x05R\x06shards\"\x90\x02\n" +
 	"\aCommand\x12,\n" +
-	"\x06client\x18\x01 \x01(\v2\x12.strata.kv.RequestH\x00R\x06clientB\x05\n" +
+	"\x06client\x18\x01 \x01(\v2\x12.strata.kv.RequestH\x00R\x06client\x121\n" +
+	"\x06config\x18\x02 \x01(\v2\x17.strata.kv.ConfigChangeH\x00R\x06config\x124\n" +
+	"\ainstall\x18\x03 \x01(\v2\x18.strata.kv.InstallShardsH\x00R\ainstall\x121\n" +
+	"\x06delete\x18\x04 \x01(\v2\x17.strata.kv.DeleteShardsH\x00R\x06delete\x124\n" +
+	"\acleaned\x18\x05 \x01(\v2\x18.strata.kv.ShardsCleanedH\x00R\acleanedB\x05\n" +
 	"\x03cmd*\"\n" +
 	"\x02Op\x12\a\n" +
 	"\x03GET\x10\x00\x12\a\n" +
 	"\x03PUT\x10\x01\x12\n" +
 	"\n" +
-	"\x06APPEND\x10\x02*I\n" +
+	"\x06APPEND\x10\x02*X\n" +
 	"\x03Err\x12\x06\n" +
 	"\x02OK\x10\x00\x12\n" +
 	"\n" +
 	"\x06NO_KEY\x10\x01\x12\x10\n" +
 	"\fWRONG_LEADER\x10\x02\x12\x0f\n" +
 	"\vWRONG_GROUP\x10\x03\x12\v\n" +
-	"\aTIMEOUT\x10\x0423\n" +
+	"\aTIMEOUT\x10\x04\x12\r\n" +
+	"\tNOT_READY\x10\x052\xcf\x01\n" +
 	"\x02KV\x12-\n" +
-	"\x02Do\x12\x12.strata.kv.Request\x1a\x13.strata.kv.ResponseB'Z%github.com/HridhayP/strata/proto/kvpbb\x06proto3"
+	"\x02Do\x12\x12.strata.kv.Request\x1a\x13.strata.kv.Response\x12I\n" +
+	"\n" +
+	"PullShards\x12\x1c.strata.kv.PullShardsRequest\x1a\x1d.strata.kv.PullShardsResponse\x12O\n" +
+	"\fDeleteShards\x12\x1e.strata.kv.DeleteShardsRequest\x1a\x1f.strata.kv.DeleteShardsResponseB'Z%github.com/HridhayP/strata/proto/kvpbb\x06proto3"
 
 var (
 	file_kv_proto_rawDescOnce sync.Once
@@ -385,25 +983,48 @@ func file_kv_proto_rawDescGZIP() []byte {
 }
 
 var file_kv_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_kv_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_kv_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_kv_proto_goTypes = []any{
-	(Op)(0),          // 0: strata.kv.Op
-	(Err)(0),         // 1: strata.kv.Err
-	(*Request)(nil),  // 2: strata.kv.Request
-	(*Response)(nil), // 3: strata.kv.Response
-	(*Command)(nil),  // 4: strata.kv.Command
+	(Op)(0),                      // 0: strata.kv.Op
+	(Err)(0),                     // 1: strata.kv.Err
+	(*Request)(nil),              // 2: strata.kv.Request
+	(*Response)(nil),             // 3: strata.kv.Response
+	(*ShardData)(nil),            // 4: strata.kv.ShardData
+	(*PullShardsRequest)(nil),    // 5: strata.kv.PullShardsRequest
+	(*PullShardsResponse)(nil),   // 6: strata.kv.PullShardsResponse
+	(*DeleteShardsRequest)(nil),  // 7: strata.kv.DeleteShardsRequest
+	(*DeleteShardsResponse)(nil), // 8: strata.kv.DeleteShardsResponse
+	(*ConfigChange)(nil),         // 9: strata.kv.ConfigChange
+	(*InstallShards)(nil),        // 10: strata.kv.InstallShards
+	(*DeleteShards)(nil),         // 11: strata.kv.DeleteShards
+	(*ShardsCleaned)(nil),        // 12: strata.kv.ShardsCleaned
+	(*Command)(nil),              // 13: strata.kv.Command
+	(*ctrlpb.Config)(nil),        // 14: strata.ctrl.Config
 }
 var file_kv_proto_depIdxs = []int32{
-	0, // 0: strata.kv.Request.op:type_name -> strata.kv.Op
-	1, // 1: strata.kv.Response.err:type_name -> strata.kv.Err
-	2, // 2: strata.kv.Command.client:type_name -> strata.kv.Request
-	2, // 3: strata.kv.KV.Do:input_type -> strata.kv.Request
-	3, // 4: strata.kv.KV.Do:output_type -> strata.kv.Response
-	4, // [4:5] is the sub-list for method output_type
-	3, // [3:4] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	0,  // 0: strata.kv.Request.op:type_name -> strata.kv.Op
+	1,  // 1: strata.kv.Response.err:type_name -> strata.kv.Err
+	1,  // 2: strata.kv.PullShardsResponse.err:type_name -> strata.kv.Err
+	4,  // 3: strata.kv.PullShardsResponse.shards:type_name -> strata.kv.ShardData
+	1,  // 4: strata.kv.DeleteShardsResponse.err:type_name -> strata.kv.Err
+	14, // 5: strata.kv.ConfigChange.config:type_name -> strata.ctrl.Config
+	4,  // 6: strata.kv.InstallShards.shards:type_name -> strata.kv.ShardData
+	2,  // 7: strata.kv.Command.client:type_name -> strata.kv.Request
+	9,  // 8: strata.kv.Command.config:type_name -> strata.kv.ConfigChange
+	10, // 9: strata.kv.Command.install:type_name -> strata.kv.InstallShards
+	11, // 10: strata.kv.Command.delete:type_name -> strata.kv.DeleteShards
+	12, // 11: strata.kv.Command.cleaned:type_name -> strata.kv.ShardsCleaned
+	2,  // 12: strata.kv.KV.Do:input_type -> strata.kv.Request
+	5,  // 13: strata.kv.KV.PullShards:input_type -> strata.kv.PullShardsRequest
+	7,  // 14: strata.kv.KV.DeleteShards:input_type -> strata.kv.DeleteShardsRequest
+	3,  // 15: strata.kv.KV.Do:output_type -> strata.kv.Response
+	6,  // 16: strata.kv.KV.PullShards:output_type -> strata.kv.PullShardsResponse
+	8,  // 17: strata.kv.KV.DeleteShards:output_type -> strata.kv.DeleteShardsResponse
+	15, // [15:18] is the sub-list for method output_type
+	12, // [12:15] is the sub-list for method input_type
+	12, // [12:12] is the sub-list for extension type_name
+	12, // [12:12] is the sub-list for extension extendee
+	0,  // [0:12] is the sub-list for field type_name
 }
 
 func init() { file_kv_proto_init() }
@@ -411,8 +1032,12 @@ func file_kv_proto_init() {
 	if File_kv_proto != nil {
 		return
 	}
-	file_kv_proto_msgTypes[2].OneofWrappers = []any{
+	file_kv_proto_msgTypes[11].OneofWrappers = []any{
 		(*Command_Client)(nil),
+		(*Command_Config)(nil),
+		(*Command_Install)(nil),
+		(*Command_Delete)(nil),
+		(*Command_Cleaned)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -420,7 +1045,7 @@ func file_kv_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_kv_proto_rawDesc), len(file_kv_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   3,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
