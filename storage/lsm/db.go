@@ -2,8 +2,9 @@
 //
 // Writes go to an in-memory skiplist (the memtable), optionally preceded by a
 // write-ahead log record. When the memtable passes a size threshold it is
-// written out as an immutable, sorted SSTable file. Reads check the memtable
-// and then SSTables from newest to oldest, using a per-table Bloom filter to
+// frozen and written out as an immutable, sorted SSTable file by a background
+// goroutine while a fresh memtable takes new writes. Reads check the
+// memtable, the frozen memtable, and then SSTables from newest to oldest, using a per-table Bloom filter to
 // skip files that cannot contain the key. When too many tables accumulate a
 // background compaction merges them into one, dropping overwritten values and
 // tombstones.
@@ -73,6 +74,8 @@ type DB struct {
 
 	mu          sync.RWMutex
 	mem         *memtable
+	imm         *memtable // frozen memtable being flushed, or nil
+	flushDone   *sync.Cond
 	tables      []*table // newest first
 	nextFile    uint64
 	log         *wal.WAL
@@ -91,6 +94,7 @@ func Open(dir string, opts Options) (*DB, error) {
 	}
 	db := &DB{dir: dir, opts: opts, mem: newMemtable(), nextFile: 1}
 	db.compactDone = sync.NewCond(&db.mu)
+	db.flushDone = sync.NewCond(&db.mu)
 
 	m, err := readManifest(filepath.Join(dir, "MANIFEST"))
 	if err != nil {
@@ -250,6 +254,11 @@ func (db *DB) Apply(b *Batch) error {
 		db.mu.Unlock()
 		return ErrClosed
 	}
+	if db.bgErr != nil {
+		err := db.bgErr
+		db.mu.Unlock()
+		return err
+	}
 	var seq uint64
 	if db.log != nil {
 		var err error
@@ -259,15 +268,11 @@ func (db *DB) Apply(b *Batch) error {
 		}
 	}
 	(&Batch{data: data}).each(func(e entry) { db.mem.put(e.key, e.value, e.kind) })
-	var err error
 	if db.mem.size >= db.opts.MemtableSize {
-		err = db.flushLocked()
+		db.startFlushLocked()
 	}
 	log := db.log
 	db.mu.Unlock()
-	if err != nil {
-		return err
-	}
 	if log != nil {
 		return log.Sync(seq)
 	}
@@ -295,12 +300,17 @@ func (db *DB) Get(key []byte) ([]byte, bool, error) {
 		db.mu.RUnlock()
 		return nil, false, ErrClosed
 	}
-	if v, kind, ok := db.mem.get(key); ok {
-		db.mu.RUnlock()
-		if kind == kindDelete {
-			return nil, false, nil
+	for _, m := range []*memtable{db.mem, db.imm} {
+		if m == nil {
+			continue
 		}
-		return append([]byte(nil), v...), true, nil
+		if v, kind, ok := m.get(key); ok {
+			db.mu.RUnlock()
+			if kind == kindDelete {
+				return nil, false, nil
+			}
+			return append([]byte(nil), v...), true, nil
+		}
 	}
 	tables := db.refTables()
 	db.mu.RUnlock()
@@ -343,12 +353,14 @@ func (db *DB) Scan(prefix []byte, fn func(key, value []byte) bool) error {
 		db.mu.RUnlock()
 		return ErrClosed
 	}
-	memEnts := db.mem.entries(prefix)
+	sources := []source{&sliceIter{ents: db.mem.entries(prefix)}}
+	if db.imm != nil {
+		sources = append(sources, &sliceIter{ents: db.imm.entries(prefix)})
+	}
 	tables := db.refTables()
 	db.mu.RUnlock()
 	defer unrefAll(tables)
 
-	sources := []source{&sliceIter{ents: memEnts}}
 	for _, t := range tables {
 		sources = append(sources, t.seek(prefix))
 	}
@@ -363,65 +375,111 @@ func (db *DB) Scan(prefix []byte, fn func(key, value []byte) bool) error {
 	})
 }
 
-// Flush writes the memtable to a new SSTable.
+// Flush writes everything applied so far to SSTables and waits for it.
 func (db *DB) Flush() error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
-	if db.closed {
-		return ErrClosed
-	}
 	return db.flushLocked()
 }
 
+// flushLocked flushes the memtable and waits until no flush is running.
 func (db *DB) flushLocked() error {
-	if db.mem.count == 0 {
-		return nil
+	if db.closed {
+		return ErrClosed
 	}
+	db.startFlushLocked()
+	for db.imm != nil && db.bgErr == nil {
+		db.flushDone.Wait()
+	}
+	return db.bgErr
+}
+
+// startFlushLocked freezes the memtable and writes it out on another
+// goroutine. Only one flush runs at a time: if the previous one is still
+// going, the caller waits for it, which throttles writers that outrun the
+// disk. Reads continue throughout because the wait releases db.mu.
+func (db *DB) startFlushLocked() {
+	for db.imm != nil && db.bgErr == nil {
+		db.flushDone.Wait()
+	}
+	if db.closed || db.bgErr != nil || db.mem.count == 0 {
+		return
+	}
+	db.imm = db.mem
+	db.mem = newMemtable()
 	num := db.nextFile
 	db.nextFile++
-	w, err := newTableWriter(db.tablePath(num))
-	if err != nil {
-		return err
+	go db.writeImm(db.imm, num)
+}
+
+// writeImm writes a frozen memtable to SSTable num and installs it.
+func (db *DB) writeImm(imm *memtable, num uint64) {
+	t, err := db.writeTable(imm, num)
+
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	defer db.flushDone.Broadcast()
+	if err == nil && db.closed {
+		t.unref()
+		return
 	}
-	for _, e := range db.mem.entries(nil) {
-		if err := w.add(e); err != nil {
-			w.abort()
-			return err
+	if err == nil {
+		db.tables = append([]*table{t}, db.tables...)
+		if err = db.writeManifest(); err != nil {
+			db.tables = db.tables[1:]
+			t.obsolete.Store(true)
+			t.unref()
 		}
 	}
-	if err := w.finish(); err != nil {
-		w.abort()
-		return err
-	}
-	t, err := openTable(db.tablePath(num), num)
-	if err != nil {
-		return err
-	}
-	db.tables = append([]*table{t}, db.tables...)
-	if err := db.writeManifest(); err != nil {
-		return err
-	}
-	if db.log != nil {
-		// Everything in the log is now in an SSTable.
-		if err := db.log.Rewrite(nil); err != nil {
-			return err
+	if err == nil && db.log != nil {
+		// The log now only needs the writes made since the freeze, which
+		// are exactly the current memtable's contents.
+		var recs []wal.Record
+		var b Batch
+		for _, e := range db.mem.entries(nil) {
+			b.add(e.kind, e.key, e.value)
 		}
+		if b.n > 0 {
+			recs = append(recs, wal.Record{Type: 1, Data: b.data})
+		}
+		err = db.log.Rewrite(recs)
 	}
-	db.mem = newMemtable()
+	if err != nil {
+		// Keep imm readable; writes fail from now on.
+		db.bgErr = fmt.Errorf("lsm: flush: %w", err)
+		return
+	}
+	db.imm = nil
 	db.stats.Flushes++
 	if len(db.tables) >= db.opts.CompactionTrigger && !db.compacting {
 		db.compacting = true
 		go db.compact()
 	}
-	return nil
 }
 
-// Compact synchronously merges all tables into one.
+func (db *DB) writeTable(m *memtable, num uint64) (*table, error) {
+	w, err := newTableWriter(db.tablePath(num))
+	if err != nil {
+		return nil, err
+	}
+	for _, e := range m.entries(nil) {
+		if err := w.add(e); err != nil {
+			w.abort()
+			return nil, err
+		}
+	}
+	if err := w.finish(); err != nil {
+		w.abort()
+		return nil, err
+	}
+	return openTable(db.tablePath(num), num)
+}
+
+// Compact synchronously merges all tables, including any being flushed,
+// into one.
 func (db *DB) Compact() error {
 	db.mu.Lock()
-	for db.compacting {
-		db.compactDone.Wait()
-	}
+	db.waitBackgroundLocked()
 	if db.closed {
 		db.mu.Unlock()
 		return ErrClosed
@@ -534,9 +592,7 @@ func (db *DB) compactOnce() error {
 func (db *DB) Reset() error {
 	db.mu.Lock()
 	defer db.mu.Unlock()
-	for db.compacting {
-		db.compactDone.Wait()
-	}
+	db.waitBackgroundLocked()
 	if db.closed {
 		return ErrClosed
 	}
@@ -551,6 +607,7 @@ func (db *DB) Reset() error {
 		t.unref()
 	}
 	db.mem = newMemtable()
+	db.imm = nil
 	if db.log != nil {
 		return db.log.Rewrite(nil)
 	}
@@ -572,14 +629,13 @@ func (db *DB) Stats() Stats {
 // Close flushes the memtable and closes the database.
 func (db *DB) Close() error {
 	db.mu.Lock()
-	for db.compacting {
-		db.compactDone.Wait()
-	}
+	db.waitBackgroundLocked()
 	if db.closed {
 		db.mu.Unlock()
 		return nil
 	}
 	err := db.flushLocked()
+	db.waitBackgroundLocked() // the flush may have started a compaction
 	db.closed = true
 	db.closeTables()
 	if db.log != nil {
@@ -595,9 +651,7 @@ func (db *DB) Close() error {
 // is dropped. Only for tests.
 func (db *DB) CrashClose() {
 	db.mu.Lock()
-	for db.compacting {
-		db.compactDone.Wait()
-	}
+	db.waitBackgroundLocked()
 	defer db.mu.Unlock()
 	if db.closed {
 		return
@@ -606,6 +660,16 @@ func (db *DB) CrashClose() {
 	db.closeTables()
 	if db.log != nil {
 		db.log.CrashClose()
+	}
+}
+
+// waitBackgroundLocked waits for any running flush and compaction.
+func (db *DB) waitBackgroundLocked() {
+	for db.imm != nil && db.bgErr == nil {
+		db.flushDone.Wait()
+	}
+	for db.compacting {
+		db.compactDone.Wait()
 	}
 }
 

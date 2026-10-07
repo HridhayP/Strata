@@ -26,6 +26,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/HridhayP/strata/proto/ctrlpb"
@@ -108,6 +109,7 @@ type Server struct {
 	writeWaiters map[uint64]*writeWaiter
 	readWaiters  map[uint64][]chan struct{}
 	sinceCheck   int
+	compacting   atomic.Bool
 
 	stopCh chan struct{}
 	done   chan struct{}
@@ -736,22 +738,31 @@ func (s *Server) ShardStates() ([NShards]byte, uint64) {
 }
 
 // maybeCompact flushes the LSM and lets Raft drop its log prefix once the
-// log grows past MaxRaftLog entries.
+// log grows past MaxRaftLog entries. It runs in the background so the apply
+// loop keeps going while the SSTable is written.
 func (s *Server) maybeCompact() {
 	s.sinceCheck++
 	if s.sinceCheck < 256 {
 		return
 	}
 	s.sinceCheck = 0
-	if s.rf.Status().LogEntries < s.cfg.MaxRaftLog {
+	if s.rf.Status().LogEntries < s.cfg.MaxRaftLog || !s.compacting.CompareAndSwap(false, true) {
 		return
 	}
-	if err := s.db.Flush(); err != nil {
-		panic(fmt.Sprintf("kv: flush: %v", err))
-	}
-	if err := s.rf.Snapshot(s.appliedIndex(), nil); err != nil {
-		panic(fmt.Sprintf("kv: raft compaction: %v", err))
-	}
+	// Every entry up to idx is already in the LSM memtable, so once Flush
+	// returns it is durable without the log.
+	idx := s.appliedIndex()
+	s.bg.Add(1)
+	go func() {
+		defer s.bg.Done()
+		defer s.compacting.Store(false)
+		if err := s.db.Flush(); err != nil {
+			panic(fmt.Sprintf("kv: flush: %v", err))
+		}
+		if err := s.rf.Snapshot(idx, nil); err != nil {
+			panic(fmt.Sprintf("kv: raft compaction: %v", err))
+		}
+	}()
 }
 
 func appendPair(buf, k, v []byte) []byte {

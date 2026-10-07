@@ -326,3 +326,60 @@ func BenchmarkGet(b *testing.B) {
 		}
 	})
 }
+
+// TestReadsDuringBackgroundFlush has readers check that a key's value never
+// goes backwards or disappears while flushes and compactions run underneath.
+func TestReadsDuringBackgroundFlush(t *testing.T) {
+	db := open(t, t.TempDir(), Options{MemtableSize: 4 << 10, CompactionTrigger: 3})
+	const keys = 50
+	const rounds = 400
+	for k := 0; k < keys; k++ {
+		db.Put(key(k), []byte(fmt.Sprintf("%06d", 0)))
+	}
+	var wg sync.WaitGroup
+	done := make(chan struct{})
+	errs := make(chan error, 4)
+	for r := 0; r < 4; r++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			last := make([]string, keys)
+			for {
+				select {
+				case <-done:
+					return
+				default:
+				}
+				for k := 0; k < keys; k++ {
+					v, ok, err := db.Get(key(k))
+					if err != nil || !ok || string(v) < last[k] {
+						errs <- fmt.Errorf("key %d: got %q ok=%v err=%v after %q", k, v, ok, err, last[k])
+						return
+					}
+					last[k] = string(v)
+				}
+			}
+		}()
+	}
+	for i := 1; i <= rounds; i++ {
+		for k := 0; k < keys; k++ {
+			if err := db.Put(key(k), []byte(fmt.Sprintf("%06d", i))); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// Fresh keys grow the memtable so it keeps flushing.
+		for j := 0; j < 5; j++ {
+			db.Put(key(1000+i*5+j), bytes.Repeat([]byte{'f'}, 100))
+		}
+	}
+	close(done)
+	wg.Wait()
+	select {
+	case err := <-errs:
+		t.Fatal(err)
+	default:
+	}
+	if st := db.Stats(); st.Flushes < 10 || st.Compactions == 0 {
+		t.Fatalf("expected many flushes and a compaction, got %+v", st)
+	}
+}
