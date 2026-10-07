@@ -1,0 +1,14 @@
+scenario                              runs      ok illegal unknown  errors   avg ops
+all-faults+pipelined                  5000    5000       0       0       0       181
+all-faults+snapshots                  5000    5000       0       0       0       179
+crashes                               6250    6250       0       0       0       473
+disk-crashes                          6250    6250       0       0       0       352
+partitions                            5000    5000       0       0       0       483
+reliable                              5000    5000       0       0       0       500
+sharded-crashes+unreliable            2500    2500       0       0       0       500
+sharded-migrations                    2500    2500       0       0       0       500
+unreliable                            6250    6250       0       0       0       241
+unreliable+partitions+pipelined       6250    6250       0       0       0       221
+TOTAL                                50000   50000       0       0       0       345
+wall time 3654s with 22 workers
+exit=0

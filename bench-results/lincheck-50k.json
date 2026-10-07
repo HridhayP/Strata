@@ -1,0 +1,120 @@
+{
+  "histories": 50000,
+  "workers": 22,
+  "fault_phase": "1s",
+  "first_seed": 100000,
+  "wall_time_s": 3654.3886148,
+  "total": {
+    "runs": 50000,
+    "ok": 50000,
+    "illegal": 0,
+    "unknown": 0,
+    "errors": 0,
+    "stuck": 0,
+    "ops": 17258082,
+    "min_ops": 14
+  },
+  "by_scenario": {
+    "all-faults+pipelined": {
+      "runs": 5000,
+      "ok": 5000,
+      "illegal": 0,
+      "unknown": 0,
+      "errors": 0,
+      "stuck": 0,
+      "ops": 907288,
+      "min_ops": 34
+    },
+    "all-faults+snapshots": {
+      "runs": 5000,
+      "ok": 5000,
+      "illegal": 0,
+      "unknown": 0,
+      "errors": 0,
+      "stuck": 0,
+      "ops": 896186,
+      "min_ops": 27
+    },
+    "crashes": {
+      "runs": 6250,
+      "ok": 6250,
+      "illegal": 0,
+      "unknown": 0,
+      "errors": 0,
+      "stuck": 0,
+      "ops": 2958688,
+      "min_ops": 93
+    },
+    "disk-crashes": {
+      "runs": 6250,
+      "ok": 6250,
+      "illegal": 0,
+      "unknown": 0,
+      "errors": 0,
+      "stuck": 0,
+      "ops": 2199592,
+      "min_ops": 14
+    },
+    "partitions": {
+      "runs": 5000,
+      "ok": 5000,
+      "illegal": 0,
+      "unknown": 0,
+      "errors": 0,
+      "stuck": 0,
+      "ops": 2413438,
+      "min_ops": 149
+    },
+    "reliable": {
+      "runs": 5000,
+      "ok": 5000,
+      "illegal": 0,
+      "unknown": 0,
+      "errors": 0,
+      "stuck": 0,
+      "ops": 2499759,
+      "min_ops": 341
+    },
+    "sharded-crashes+unreliable": {
+      "runs": 2500,
+      "ok": 2500,
+      "illegal": 0,
+      "unknown": 0,
+      "errors": 0,
+      "stuck": 0,
+      "ops": 1250000,
+      "min_ops": 500
+    },
+    "sharded-migrations": {
+      "runs": 2500,
+      "ok": 2500,
+      "illegal": 0,
+      "unknown": 0,
+      "errors": 0,
+      "stuck": 0,
+      "ops": 1250000,
+      "min_ops": 500
+    },
+    "unreliable": {
+      "runs": 6250,
+      "ok": 6250,
+      "illegal": 0,
+      "unknown": 0,
+      "errors": 0,
+      "stuck": 0,
+      "ops": 1504214,
+      "min_ops": 61
+    },
+    "unreliable+partitions+pipelined": {
+      "runs": 6250,
+      "ok": 6250,
+      "illegal": 0,
+      "unknown": 0,
+      "errors": 0,
+      "stuck": 0,
+      "ops": 1378917,
+      "min_ops": 60
+    }
+  },
+  "failures": null
+}

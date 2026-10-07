@@ -1,0 +1,5 @@
+bin/
+tmp/
+bench-results/
+.git/
+*.exe

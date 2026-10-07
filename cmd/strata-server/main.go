@@ -44,6 +44,7 @@ import (
 func main() {
 	var (
 		id          = flag.Int("id", 0, "this node's ID")
+		idFromHost  = flag.Bool("id-from-hostname", false, "derive -id from a StatefulSet hostname: name-N runs as N+1")
 		nodesFlag   = flag.String("nodes", "", "node address book: id=host:port,...")
 		listen      = flag.String("listen", "", "gRPC listen address (default: this node's address book entry)")
 		ctrlFlag    = flag.String("ctrl", "", "node IDs of the controller group (empty: unsharded)")
@@ -57,6 +58,15 @@ func main() {
 		maxInflight = flag.Int("max-inflight", 1, "AppendEntries in flight per follower (>1 pipelines replication)")
 	)
 	flag.Parse()
+	if *idFromHost {
+		h, err := os.Hostname()
+		if err != nil {
+			log.Fatal(err)
+		}
+		if *id, err = ordinalID(h); err != nil {
+			log.Fatal(err)
+		}
+	}
 
 	nodes, err := parseNodes(*nodesFlag)
 	if err != nil {
@@ -232,6 +242,16 @@ func keys(m map[int64][]int32) []int64 {
 	}
 	slices.Sort(out)
 	return out
+}
+
+// ordinalID maps a StatefulSet pod hostname ("strata-3") to a node ID (4).
+func ordinalID(host string) (int, error) {
+	i := strings.LastIndexByte(host, '-')
+	n, err := strconv.Atoi(host[i+1:])
+	if i < 0 || err != nil || n < 0 {
+		return 0, fmt.Errorf("hostname %q does not end in -<ordinal>", host)
+	}
+	return n + 1, nil
 }
 
 func parseNodes(s string) (map[int]string, error) {

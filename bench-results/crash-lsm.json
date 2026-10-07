@@ -1,0 +1,8 @@
+{
+  "mode": "lsm",
+  "runs": 1000,
+  "passed": 1000,
+  "failed": 0,
+  "seed": 1,
+  "wall_time_s": 402.6843438
+}

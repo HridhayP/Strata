@@ -17,13 +17,40 @@ mode=${2:-unsharded}
 shift $(( $# >= 2 ? 2 : $# )) || true
 
 stop() {
-  if [ -d "$RUN" ]; then
-    for pidf in "$RUN"/*.pid; do
-      [ -e "$pidf" ] || continue
-      kill "$(cat "$pidf")" 2>/dev/null || true
-      rm -f "$pidf"
+  [ -d "$RUN" ] || return 0
+  local pids=()
+  for pidf in "$RUN"/*.pid; do
+    [ -e "$pidf" ] || continue
+    pids+=("$(cat "$pidf")")
+    rm -f "$pidf"
+  done
+  [ ${#pids[@]} -gt 0 ] || return 0
+  kill "${pids[@]}" 2>/dev/null || true
+  # Wait for the processes to exit so their ports and files are free.
+  for _ in $(seq 1 100); do
+    kill -0 "${pids[@]}" 2>/dev/null || return 0
+    sleep 0.1
+  done
+  kill -9 "${pids[@]}" 2>/dev/null || true
+  sleep 0.5
+}
+
+# wait_ready blocks until every node answers /status and one is leader.
+wait_ready() {
+  local n=$1
+  for _ in $(seq 1 100); do
+    local up=0 leader=0
+    for i in $(seq 1 "$n"); do
+      if st=$(curl -sf "http://127.0.0.1:$((9100 + i))/status" 2>/dev/null); then
+        up=$((up + 1))
+        case $st in *'"leader"'*) leader=1 ;; esac
+      fi
     done
-  fi
+    [ "$up" = "$n" ] && [ "$leader" = 1 ] && return 0
+    sleep 0.2
+  done
+  echo "cluster did not become ready; see $RUN/node*.log" >&2
+  return 1
 }
 
 case "$cmd" in
@@ -51,6 +78,7 @@ start)
       -metrics "127.0.0.1:$((9100 + i))" "${extra[@]}" "$@" >"$RUN/node$i.log" 2>&1 &
     echo $! >"$RUN/node$i.pid"
   done
+  wait_ready "$n"
   echo "nodes: $nodes"
   ;;
 *)

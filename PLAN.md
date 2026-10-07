@@ -40,5 +40,5 @@ Global rules: real code, passing unit tests, CI (build + test), only measured nu
 - [x] M4 KV service (linearizable, dedup, ReadIndex) + porcupine harness
 - [x] M5 Sharding: ring, controller, live migration
 - [x] M6 gRPC transport, server binary, Prometheus metrics
-- [ ] M7 Benchmarks run, RESULTS.md
-- [ ] M8 Docker, compose, k8s, CI, README, INTERVIEW_NOTES
+- [x] M7 Benchmarks run, RESULTS.md
+- [x] M8 Docker, compose, k8s, CI, README, INTERVIEW_NOTES
