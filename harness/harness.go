@@ -191,6 +191,8 @@ type Result struct {
 	Linearizable porcupine.CheckResult
 	Crashes      int
 	Partitions   int
+	Reconfigs    int
+	Stuck        bool // clients had not finished when the run gave up
 	History      []porcupine.Operation
 }
 
