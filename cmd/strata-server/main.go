@@ -1,6 +1,7 @@
 // Command strata-server runs one Strata node. A node can host a replica of
 // the shard controller and replicas of one or more KV groups, all served on
-// a single gRPC port, plus a Prometheus /metrics endpoint.
+// a single gRPC port, plus an HTTP endpoint with Prometheus /metrics, /status
+// and /debug/pprof.
 //
 // Unsharded (one KV group serving every shard, no controller):
 //
@@ -20,6 +21,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -52,6 +54,7 @@ func main() {
 		noBatch     = flag.Bool("no-fsync-batching", false, "fsync every WAL append individually (benchmark baseline)")
 		election    = flag.Duration("election-timeout", 300*time.Millisecond, "Raft election timeout")
 		maxLog      = flag.Int("max-raft-log", 50000, "log entries before compaction")
+		maxInflight = flag.Int("max-inflight", 1, "AppendEntries in flight per follower (>1 pipelines replication)")
 	)
 	flag.Parse()
 
@@ -129,7 +132,7 @@ func main() {
 		cfg := kv.Config{
 			ID: *id, Peers: members, Group: name, Dir: filepath.Join(dir, "lsm"),
 			RaftStorage: st, Transport: transport,
-			ElectionTimeout: *election, MaxRaftLog: *maxLog,
+			ElectionTimeout: *election, MaxRaftLog: *maxLog, MaxInflight: *maxInflight,
 			Observer: metrics.NewObserver(name),
 		}
 		if sharded {
@@ -167,6 +170,9 @@ func main() {
 	if *metricsAddr != "" {
 		mux := http.NewServeMux()
 		mux.Handle("/metrics", promhttp.Handler())
+		mux.HandleFunc("/debug/pprof/", pprof.Index)
+		mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 		mux.HandleFunc("/status", func(w http.ResponseWriter, _ *http.Request) {
 			var out []any
 			for _, f := range statuses {
