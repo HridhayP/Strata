@@ -34,9 +34,9 @@ Global rules: real code, passing unit tests, CI (build + test), only measured nu
 
 ## Milestones
 
-- [ ] M1 WAL with group commit + crash tests
-- [ ] M2 Raft: election, replication, persistence, snapshots; sim transport tests
-- [ ] M3 LSM engine + crash tests
+- [x] M1 WAL with group commit + crash tests
+- [x] M2 Raft: election, replication, persistence, snapshots; sim transport tests
+- [x] M3 LSM engine + crash tests
 - [ ] M4 KV service (linearizable, dedup, ReadIndex) + porcupine harness
 - [ ] M5 Sharding: ring, controller, live migration
 - [ ] M6 gRPC transport, server binary, Prometheus metrics
