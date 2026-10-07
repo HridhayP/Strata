@@ -3,14 +3,17 @@
 #   docker compose up -d --build
 #   docker compose run --rm bench          # 90/10 load from inside the network
 #   open http://localhost:9090             # Prometheus
+# One service builds the image; the rest reuse it (building it five times in
+# parallel would race on the same tag).
 x-node: &node
-  build: .
   image: strata:latest
+  pull_policy: never
   restart: unless-stopped
 
 services:
   strata1:
     <<: *node
+    build: .
     command: ["-id", "1", "-nodes", "1=strata1:7000,2=strata2:7000,3=strata3:7000,4=strata4:7000,5=strata5:7000", "-groups", "1=1,2,3,4,5", "-data", "/data", "-metrics", ":9100"]
     volumes: ["data1:/data"]
     ports: ["7001:7000"]
@@ -43,6 +46,7 @@ services:
 
   bench:
     image: strata:latest
+    pull_policy: never
     profiles: ["bench"]
     entrypoint: ["/usr/local/bin/strata-bench"]
     command: ["-nodes", "1=strata1:7000,2=strata2:7000,3=strata3:7000,4=strata4:7000,5=strata5:7000", "-servers", "1,2,3,4,5", "-clients", "64", "-duration", "20s"]

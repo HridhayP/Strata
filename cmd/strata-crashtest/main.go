@@ -67,7 +67,11 @@ func main() {
 	flag.Parse()
 
 	work := *dir
-	if work == "" {
+	if work != "" {
+		if err := os.MkdirAll(work, 0o755); err != nil {
+			log.Fatal(err)
+		}
+	} else {
 		d, err := os.MkdirTemp("", "strata-crashtest-")
 		if err != nil {
 			log.Fatal(err)
