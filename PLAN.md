@@ -15,7 +15,7 @@ Fault-tolerant sharded distributed key-value store in Go.
 - Dockerfile + docker-compose for a 5-node cluster, k8s manifests, Prometheus metrics (commit latency, leader changes, replication lag).
 - Resume targets to compare against (report real numbers, hit or miss): 120K ops/sec, 4ms p99, 3.2x write throughput, 50K histories, 1,000+ crash-recovery runs.
 
-Global rules: real code, passing unit tests, CI (build + test), only measured numbers in RESULTS.md, incremental commits, push at milestones, README with Mermaid diagram + design decisions, INTERVIEW_NOTES.md with 10 Q&As.
+Global rules: real code, passing unit tests, CI (build + test), only measured numbers in RESULTS.md, incremental commits, push at milestones, README with Mermaid diagram + design decisions, FAQ.md with 10 Q&As.
 
 ## Layout
 
@@ -41,4 +41,4 @@ Global rules: real code, passing unit tests, CI (build + test), only measured nu
 - [x] M5 Sharding: ring, controller, live migration
 - [x] M6 gRPC transport, server binary, Prometheus metrics
 - [x] M7 Benchmarks run, RESULTS.md
-- [x] M8 Docker, compose, k8s, CI, README, INTERVIEW_NOTES
+- [x] M8 Docker, compose, k8s, CI, README, FAQ
