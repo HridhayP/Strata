@@ -1,6 +1,6 @@
-# Interview notes
+# FAQ
 
-Ten questions I expect about Strata, with answers tied to the code.
+Common questions about Strata, with answers tied to the code.
 
 ### 1. How do you make reads linearizable without putting them in the Raft log?
 
